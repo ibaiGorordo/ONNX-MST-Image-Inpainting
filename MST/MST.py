@@ -1,10 +1,9 @@
 import time
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import onnxruntime
 
-from hawp.HAWP import HAWP
+from .hawp.HAWP import HAWP
 
 
 class MST:
@@ -100,9 +99,6 @@ class MST:
                      (255, 255, 255), 1, cv2.LINE_AA)
 
         line_img = line_img.astype(np.uint8)
-        cv2.namedWindow("line_img", cv2.WINDOW_NORMAL)
-        cv2.imshow("line_img", line_img)
-        cv2.waitKey(0)
         return line_img
 
     def get_edge_map(self):
@@ -163,8 +159,8 @@ if __name__ == '__main__':
     masked_img, mask = get_masked_img(img)
     output_img, output_edge_map, output_lines_map = imageInpainting(masked_img, mask)
 
-    # Draw model output
+    # Draw Inpaint
     output_img = imageInpainting.draw()
-    cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
-    cv2.imshow("Output", output_img)
+    cv2.namedWindow("Inpaint", cv2.WINDOW_NORMAL)
+    cv2.imshow("Inpaint", output_img)
     cv2.waitKey(0)
