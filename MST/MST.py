@@ -1,67 +1,130 @@
 import time
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import onnxruntime
+
+from hawp.HAWP import HAWP
 
 
 class MST:
 
-    def __init__(self, path):
+    def __init__(self, model_path, hawp_path, hawp_threshold=0.98):
         # Initialize model
-        self.initialize_model(path)
+        self.initialize_model(model_path)
+        self.line_detector = HAWP(hawp_path, hawp_threshold)
 
-    def __call__(self, image):
-        return self.update(image)
+    def __call__(self, image, mask):
+        return self.update(image, mask)
 
-    def initialize_model(self, path):
-        self.session = onnxruntime.InferenceSession(path,
+    def initialize_model(self, model_path):
+        self.session = onnxruntime.InferenceSession(model_path,
                                                     providers=['CUDAExecutionProvider',
                                                                'CPUExecutionProvider'])
+
         # Get model info
         self.get_input_details()
         self.get_output_details()
 
-    def update(self, image):
-        input_tensor = self.prepare_input(image)
+    def update(self, image, mask):
+        self.img_height, self.img_width = image.shape[:2]
+        self.image = image.copy()
+        self.mask = mask.copy()
+
+        img_tensor = self.prepare_image()
+        self.mask_tensor = self.prepare_mask()
+
+        self.input_lines = self.get_lines_map()
+        line_tensor = self.prepare_tensor(self.input_lines)
+
+        self.input_edges = self.get_edge_map()
+        edge_tensor = self.prepare_tensor(self.input_edges)
 
         # Perform inference on the image
-        outputs = self.inference(input_tensor)
+        outputs = self.inference(img_tensor, self.mask_tensor, line_tensor, edge_tensor)
 
         # Process output data
-        self.outputs = self.process_output(outputs)
+        self.output_img, \
+        self.output_edge_map, \
+        self.output_lines_map = self.process_output(outputs)
 
-        return self.outputs
+        return self.output_img, self.output_edge_map, self.output_lines_map
 
-    def prepare_input(self, image):
-        self.img_height, self.img_width = image.shape[:2]
+    def prepare_image(self):
+        image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
+        input_norm = cv2.resize(image, (self.input_width, self.input_height),
+                                interpolation=cv2.INTER_AREA) / 255.0
+        input_norm = input_norm.transpose(2, 0, 1)
+        return input_norm[np.newaxis, :, :, :].astype(np.float32)
 
-        input_img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    def prepare_mask(self):
+        mask_norm = self.mask / 255
+        mask_norm = cv2.resize(mask_norm, (self.input_width, self.input_height),
+                               interpolation=cv2.INTER_NEAREST)
+        return mask_norm[np.newaxis, np.newaxis, :, :].astype(np.float32)
 
-        # Resize input image
-        input_img = cv2.resize(input_img, (self.input_width, self.input_height))
+    def prepare_tensor(self, input):
+        input_norm = cv2.resize(input, (self.input_width, self.input_height),
+                                interpolation=cv2.INTER_AREA) / 255.0
+        return input_norm[np.newaxis, np.newaxis, :, :].astype(np.float32)
 
-        # Scale input pixel values to 0 to 1
-        # mean = [0.485, 0.456, 0.406]
-        # std = [0.229, 0.224, 0.225]
-        # input_img = ((input_img / 255.0 - mean) / std)
-        input_img = input_img / 255.0
-        input_img = input_img.transpose(2, 0, 1)
-        input_tensor = input_img[np.newaxis, :, :, :].astype(np.float32)
-
-        return input_tensor
-
-    def inference(self, input_tensor):
+    def inference(self, img_tensor, mask_tensor, line_tensor, edge_tensor):
         start = time.perf_counter()
-        outputs = self.session.run(self.output_names, {self.input_names[0]: input_tensor})
+        outputs = self.session.run(self.output_names,
+                                   {self.input_names[0]: img_tensor,
+                                    self.input_names[1]: mask_tensor,
+                                    self.input_names[2]: line_tensor,
+                                    self.input_names[3]: edge_tensor})
 
         # print(f"Inference time: {(time.perf_counter() - start)*1000:.2f} ms")
         return outputs
 
     def process_output(self, outputs):
-        return outputs
+        output_img, edges_pred, lines_preds = [output.squeeze() for output in outputs]
 
-    def draw(self, image):
-        return image
+        output_img = self.process_output_img(output_img)
+        output_edge_map = (edges_pred.squeeze() * 255).astype(np.uint8)
+        output_lines_map = (lines_preds.squeeze() * 255).astype(np.uint8)
+
+        return output_img, output_edge_map, output_lines_map
+
+    def get_lines_map(self):
+        hawp_input = self.image.copy()
+        hawp_input[self.mask==255] = 127.5
+        line_input_img = cv2.resize(hawp_input, (self.input_width, self.input_height))
+        lines, scores = self.line_detector(line_input_img)
+        line_img = np.zeros(line_input_img.shape[:2])
+
+        for line in lines:
+            cv2.line(line_img, (line[0], line[1]), (line[2], line[3]),
+                     (255, 255, 255), 1, cv2.LINE_AA)
+
+        line_img = line_img.astype(np.uint8)
+        cv2.namedWindow("line_img", cv2.WINDOW_NORMAL)
+        cv2.imshow("line_img", line_img)
+        cv2.waitKey(0)
+        return line_img
+
+    def get_edge_map(self):
+        edge_input_img = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
+        edge_input_img = cv2.resize(edge_input_img, (self.input_width, self.input_height))
+        smoothed_input = cv2.GaussianBlur(edge_input_img, (7, 7), 2)
+        edge_img = cv2.Canny(smoothed_input, 35, 70)
+        return edge_img
+
+    def process_output_img(self, output_img):
+        output_img = output_img.transpose(1, 2, 0)
+        output_img = output_img * 255
+        output_img = output_img.astype(np.uint8)
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR)
+
+        return output_img
+
+    def draw(self):
+        output_img = cv2.resize(self.output_img, (self.img_width, self.img_height))
+        output_img[self.mask == 0] = self.image[self.mask == 0]
+        return output_img
+
 
     def get_input_details(self):
         model_inputs = self.session.get_inputs()
@@ -79,18 +142,29 @@ class MST:
 if __name__ == '__main__':
     from imread_from_url import imread_from_url
 
-    model_path = "../models/xxxx.onnx"
+
+    def get_masked_img(img):
+        mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        mask[1300:1500, 1300:1500] = 255
+        masked_img = img.copy()
+        masked_img[mask == 255] = 255
+
+        return masked_img, mask
+
+
+    mst_path = "../models/MST_P2M_simp.onnx"
+    hawp_path = "../models/hawp_simp.onnx"
 
     # Initialize model
-    modelName = ModelName(model_path)
+    imageInpainting = MST(mst_path, hawp_path, hawp_threshold=0.9)
 
-    img = imread_from_url("")
+    img = imread_from_url("https://upload.wikimedia.org/wikipedia/commons/0/0d/Bedroom_Mitcham.jpg")
 
-    # Perform the inference in the image
-    outputs = modelName(img)
+    masked_img, mask = get_masked_img(img)
+    output_img, output_edge_map, output_lines_map = imageInpainting(masked_img, mask)
 
     # Draw model output
-    output_img = modelName.draw(img)
+    output_img = imageInpainting.draw()
     cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
     cv2.imshow("Output", output_img)
     cv2.waitKey(0)
