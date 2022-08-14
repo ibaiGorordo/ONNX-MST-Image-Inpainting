@@ -1,0 +1,3 @@
+[submodule "MST/ONNX-HAWP-Line-Detection"]
+	path = MST/hawp
+	url = https://github.com/ibaiGorordo/ONNX-HAWP-Line-Detection.git
