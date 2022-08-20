@@ -139,13 +139,10 @@ if __name__ == '__main__':
     from imread_from_url import imread_from_url
 
 
-    def get_masked_img(img):
+    def get_mask(img):
         mask = np.zeros(img.shape[:2], dtype=np.uint8)
         mask[1300:1500, 1300:1500] = 255
-        masked_img = img.copy()
-        masked_img[mask == 255] = 255
-
-        return masked_img, mask
+        return mask
 
 
     mst_path = "../models/MST_P2M_simp.onnx"
@@ -156,11 +153,12 @@ if __name__ == '__main__':
 
     img = imread_from_url("https://upload.wikimedia.org/wikipedia/commons/0/0d/Bedroom_Mitcham.jpg")
 
-    masked_img, mask = get_masked_img(img)
-    output_img, output_edge_map, output_lines_map = imageInpainting(masked_img, mask)
+    mask = get_mask(img)
+    output_img, output_edge_map, output_lines_map = imageInpainting(img, mask)
 
     # Draw Inpaint
     output_img = imageInpainting.draw()
+    combined_img = np.hstack((img, output_img))
     cv2.namedWindow("Inpaint", cv2.WINDOW_NORMAL)
-    cv2.imshow("Inpaint", output_img)
+    cv2.imshow("Inpaint", combined_img)
     cv2.waitKey(0)
