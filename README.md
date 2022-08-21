@@ -11,6 +11,7 @@ Python scripts for performing Image Inpainting using the MST model in ONNX
  * For ONNX, if you have a NVIDIA GPU, then install the **onnxruntime-gpu**, otherwise use the **onnxruntime** library.
  
 # Installation
+:warning: Make sure to add the recursive when cloning
 ```
 git clone https://github.com/ibaiGorordo/ONNX-MST-Image-Inpainting.git --recursive
 cd ONNX-MST-Image-Inpainting
